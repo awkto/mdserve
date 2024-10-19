@@ -54,13 +54,15 @@ func decryptAllGPGFiles() error {
     return err
 }
 
-// Delete all Markdown files on exit
+
+// Delete all Markdown files except README.md on exit
 func deleteAllMarkdownFiles() {
     err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
         if err != nil {
             return err
         }
-        if strings.HasSuffix(path, ".md") {
+
+        if strings.HasSuffix(path, ".md") && !strings.EqualFold(path, "README.md") {
             if err := os.Remove(path); err != nil {
                 return fmt.Errorf("Failed to delete %s: %v", path, err)
             }
@@ -72,9 +74,11 @@ func deleteAllMarkdownFiles() {
     if err != nil {
         log.Printf("Error during markdown cleanup: %v", err)
     } else {
-        log.Println("All markdown files deleted.")
+        log.Println("All markdown files (except README.md) deleted.")
     }
 }
+
+
 
 // Handle signals to ensure cleanup on exit
 func handleExit() {
