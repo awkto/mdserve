@@ -9,13 +9,15 @@ import (
     "net/http"
     "os"
     "os/exec"
+    "os/signal"
     "path/filepath"
     "strings"
+    "syscall"
     "github.com/gomarkdown/markdown"
 )
 
 var encryptionPassword string // Holds the password fetched from the file
-const adminUsername = "alia" // Admin username
+const adminUsername = "admin" // Admin username
 
 // Read the password from a file
 func readPasswordFromFile(filePath string) (string, error) {
@@ -50,6 +52,40 @@ func decryptAllGPGFiles() error {
         return nil
     })
     return err
+}
+
+// Delete all Markdown files on exit
+func deleteAllMarkdownFiles() {
+    err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        if strings.HasSuffix(path, ".md") {
+            if err := os.Remove(path); err != nil {
+                return fmt.Errorf("Failed to delete %s: %v", path, err)
+            }
+            log.Printf("Deleted: %s", path)
+        }
+        return nil
+    })
+
+    if err != nil {
+        log.Printf("Error during markdown cleanup: %v", err)
+    } else {
+        log.Println("All markdown files deleted.")
+    }
+}
+
+// Handle signals to ensure cleanup on exit
+func handleExit() {
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    go func() {
+        <-c
+        log.Println("Shutting down, cleaning up markdown files...")
+        deleteAllMarkdownFiles()
+        os.Exit(0)
+    }()
 }
 
 // Basic authentication check
@@ -173,7 +209,7 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-    // Read password from the specified file
+    // Read password from file
     var err error
     encryptionPassword, err = readPasswordFromFile(".secret.key")
     if err != nil {
@@ -185,13 +221,16 @@ func main() {
         log.Fatalf("Failed to decrypt files: %v", err)
     }
 
+    // Handle graceful exit for cleanup
+    handleExit()
+
     port := "8080"
     if len(os.Args) > 1 {
         port = os.Args[1]
     }
 
-    http.HandleFunc("/", viewHandler)               // View route
-    http.HandleFunc("/edit/", editHandler)          // Edit route
+    http.HandleFunc("/", viewHandler)
+    http.HandleFunc("/edit/", editHandler)
 
     fmt.Printf("Serving on http://localhost:%s\n", port)
     log.Fatal(http.ListenAndServe(":"+port, nil))
