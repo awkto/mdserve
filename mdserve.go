@@ -1,6 +1,7 @@
 package main
 
 import (
+    "bufio"
     "fmt"
     "html/template"
     "io/ioutil"
@@ -8,30 +9,65 @@ import (
     "net/http"
     "os"
     "os/exec"
+    "path/filepath"
+    "strings"
     "github.com/gomarkdown/markdown"
 )
 
-const encryptionPassword = "your-secure-password" // Static password for GPG encryption
-const adminUsername = "admin"                    // Static username for web login
-const adminPassword = "password123"              // Static password for web login
+var encryptionPassword string // Holds the password fetched from the file
+const adminUsername = "alia" // Admin username
 
-// Check Basic Authentication credentials
-func checkAuth(r *http.Request) bool {
-    username, password, ok := r.BasicAuth()
-    return ok && username == adminUsername && password == adminPassword
+// Read the password from a file
+func readPasswordFromFile(filePath string) (string, error) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return "", fmt.Errorf("could not open password file: %v", err)
+    }
+    defer file.Close()
+
+    scanner := bufio.NewScanner(file)
+    if scanner.Scan() {
+        return scanner.Text(), nil
+    }
+    return "", fmt.Errorf("password file is empty")
 }
 
-// Encrypt the file using GPG
+// Decrypt all GPG files at startup
+func decryptAllGPGFiles() error {
+    err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        if strings.HasSuffix(path, ".gpg") {
+            outputFile := strings.TrimSuffix(path, ".gpg")
+            cmd := exec.Command("gpg", "--batch", "--yes", "--passphrase", encryptionPassword, 
+                                "-o", outputFile, "-d", path)
+            if err := cmd.Run(); err != nil {
+                return fmt.Errorf("Failed to decrypt %s: %v", path, err)
+            }
+            log.Printf("Decrypted: %s", path)
+        }
+        return nil
+    })
+    return err
+}
+
+// Basic authentication check
+func checkAuth(r *http.Request) bool {
+    username, password, ok := r.BasicAuth()
+    return ok && username == adminUsername && password == encryptionPassword
+}
+
+// Encrypt a file using GPG
 func encryptFile(file string) error {
     cmd := exec.Command("gpg", "--batch", "--yes", "--passphrase", encryptionPassword, "-c", file)
-    err := cmd.Run()
-    if err != nil {
+    if err := cmd.Run(); err != nil {
         return fmt.Errorf("GPG encryption failed: %v", err)
     }
     return nil
 }
 
-// Handle Markdown viewing with authentication
+// View handler with authentication
 func viewHandler(w http.ResponseWriter, r *http.Request) {
     if !checkAuth(r) {
         w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
@@ -72,7 +108,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
     t.Execute(w, data)
 }
 
-// Handle Markdown editing with authentication
+// Edit handler with authentication
 func editHandler(w http.ResponseWriter, r *http.Request) {
     if !checkAuth(r) {
         w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
@@ -137,6 +173,18 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+    // Read password from the specified file
+    var err error
+    encryptionPassword, err = readPasswordFromFile(".secret.key")
+    if err != nil {
+        log.Fatalf("Failed to read password: %v", err)
+    }
+
+    // Decrypt all GPG files at startup
+    if err := decryptAllGPGFiles(); err != nil {
+        log.Fatalf("Failed to decrypt files: %v", err)
+    }
+
     port := "8080"
     if len(os.Args) > 1 {
         port = os.Args[1]
