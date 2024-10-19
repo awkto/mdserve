@@ -10,10 +10,22 @@ import (
     "github.com/gomarkdown/markdown"
 )
 
+// Function to check if the provided username and password match
+func checkAuth(r *http.Request) bool {
+    username, password, ok := r.BasicAuth()
+    return ok && username == "alia" && password == "melange"
+}
+
 func markdownHandler(w http.ResponseWriter, r *http.Request) {
-    file := r.URL.Path[1:] // Get the file path from the URL
+    if !checkAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+        http.Error(w, "Unauthorized.", http.StatusUnauthorized)
+        return
+    }
+
+    file := r.URL.Path[1:]
     if file == "" {
-        file = "index.md" // Default to index.md if no file is specified
+        file = "index.md"
     }
 
     content, err := ioutil.ReadFile(file)
