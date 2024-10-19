@@ -11,9 +11,17 @@ import (
     "github.com/gomarkdown/markdown"
 )
 
-const encryptionPassword = "your-secure-password" // Statically configured password
+const encryptionPassword = "your-secure-password" // Static password for GPG encryption
+const adminUsername = "admin"                    // Static username for web login
+const adminPassword = "password123"              // Static password for web login
 
-// Run GPG encryption on the saved Markdown file
+// Check Basic Authentication credentials
+func checkAuth(r *http.Request) bool {
+    username, password, ok := r.BasicAuth()
+    return ok && username == adminUsername && password == adminPassword
+}
+
+// Encrypt the file using GPG
 func encryptFile(file string) error {
     cmd := exec.Command("gpg", "--batch", "--yes", "--passphrase", encryptionPassword, "-c", file)
     err := cmd.Run()
@@ -23,8 +31,14 @@ func encryptFile(file string) error {
     return nil
 }
 
-// Handler to view Markdown content
+// Handle Markdown viewing with authentication
 func viewHandler(w http.ResponseWriter, r *http.Request) {
+    if !checkAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+        http.Error(w, "Unauthorized.", http.StatusUnauthorized)
+        return
+    }
+
     file := r.URL.Path[1:]
     if file == "" {
         file = "index.md"
@@ -58,8 +72,14 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
     t.Execute(w, data)
 }
 
-// Handler to edit and save Markdown content
+// Handle Markdown editing with authentication
 func editHandler(w http.ResponseWriter, r *http.Request) {
+    if !checkAuth(r) {
+        w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+        http.Error(w, "Unauthorized.", http.StatusUnauthorized)
+        return
+    }
+
     file := r.URL.Path[len("/edit/"):]
     if file == "" {
         http.Error(w, "File not specified", http.StatusBadRequest)
@@ -74,7 +94,7 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
             return
         }
 
-        // Encrypt the saved file
+        // Encrypt the file after saving
         err = encryptFile(file)
         if err != nil {
             log.Printf("Encryption error: %v", err)
@@ -122,8 +142,8 @@ func main() {
         port = os.Args[1]
     }
 
-    http.HandleFunc("/", viewHandler)               // View Markdown
-    http.HandleFunc("/edit/", editHandler)          // Edit Markdown
+    http.HandleFunc("/", viewHandler)               // View route
+    http.HandleFunc("/edit/", editHandler)          // Edit route
 
     fmt.Printf("Serving on http://localhost:%s\n", port)
     log.Fatal(http.ListenAndServe(":"+port, nil))
