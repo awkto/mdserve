@@ -7,10 +7,23 @@ import (
     "log"
     "net/http"
     "os"
+    "os/exec"
     "github.com/gomarkdown/markdown"
 )
 
-// Handler to render and preview the Markdown file
+const encryptionPassword = "your-secure-password" // Statically configured password
+
+// Run GPG encryption on the saved Markdown file
+func encryptFile(file string) error {
+    cmd := exec.Command("gpg", "--batch", "--yes", "--passphrase", encryptionPassword, "-c", file)
+    err := cmd.Run()
+    if err != nil {
+        return fmt.Errorf("GPG encryption failed: %v", err)
+    }
+    return nil
+}
+
+// Handler to view Markdown content
 func viewHandler(w http.ResponseWriter, r *http.Request) {
     file := r.URL.Path[1:]
     if file == "" {
@@ -45,7 +58,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
     t.Execute(w, data)
 }
 
-// Handler to render the edit form for the Markdown file
+// Handler to edit and save Markdown content
 func editHandler(w http.ResponseWriter, r *http.Request) {
     file := r.URL.Path[len("/edit/"):]
     if file == "" {
@@ -60,6 +73,15 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
             http.Error(w, "Could not save file", http.StatusInternalServerError)
             return
         }
+
+        // Encrypt the saved file
+        err = encryptFile(file)
+        if err != nil {
+            log.Printf("Encryption error: %v", err)
+            http.Error(w, "Encryption failed", http.StatusInternalServerError)
+            return
+        }
+
         http.Redirect(w, r, "/"+file, http.StatusSeeOther)
         return
     }
@@ -106,3 +128,4 @@ func main() {
     fmt.Printf("Serving on http://localhost:%s\n", port)
     log.Fatal(http.ListenAndServe(":"+port, nil))
 }
+
