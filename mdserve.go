@@ -33,6 +33,34 @@ type Heading struct {
 	ID    string
 }
 
+// Clean markdown formatting from text
+func cleanMarkdown(text string) string {
+	// Remove inline code
+	text = regexp.MustCompile("`[^`]+`").ReplaceAllStringFunc(text, func(match string) string {
+		return strings.Trim(match, "`")
+	})
+
+	// Remove bold/italic markers (**text**, *text*, __text__, _text_)
+	text = regexp.MustCompile(`\*\*([^*]+)\*\*`).ReplaceAllString(text, "$1")
+	text = regexp.MustCompile(`\*([^*]+)\*`).ReplaceAllString(text, "$1")
+	text = regexp.MustCompile(`__([^_]+)__`).ReplaceAllString(text, "$1")
+	text = regexp.MustCompile(`_([^_]+)_`).ReplaceAllString(text, "$1")
+
+	// Remove links [text](url) -> text
+	text = regexp.MustCompile(`\[([^\]]+)\]\([^\)]+\)`).ReplaceAllString(text, "$1")
+
+	// Remove images ![alt](url) -> alt
+	text = regexp.MustCompile(`!\[([^\]]*)\]\([^\)]+\)`).ReplaceAllString(text, "$1")
+
+	// Remove strikethrough ~~text~~
+	text = regexp.MustCompile(`~~([^~]+)~~`).ReplaceAllString(text, "$1")
+
+	// Remove HTML tags
+	text = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(text, "")
+
+	return strings.TrimSpace(text)
+}
+
 // Extract headings from markdown content
 func extractHeadings(content []byte) []Heading {
 	var headings []Heading
@@ -43,15 +71,17 @@ func extractHeadings(content []byte) []Heading {
 		line = strings.TrimSpace(line)
 		if matches := headingRegex.FindStringSubmatch(line); matches != nil {
 			level := len(matches[1])
-			text := strings.TrimSpace(matches[2])
-			// Create a simple ID from the heading text
-			id := strings.ToLower(text)
+			rawText := strings.TrimSpace(matches[2])
+			cleanText := cleanMarkdown(rawText)
+
+			// Create a simple ID from the cleaned text
+			id := strings.ToLower(cleanText)
 			id = regexp.MustCompile(`[^a-z0-9\s-]`).ReplaceAllString(id, "")
 			id = regexp.MustCompile(`\s+`).ReplaceAllString(id, "-")
 
 			headings = append(headings, Heading{
 				Level: level,
-				Text:  text,
+				Text:  cleanText,
 				ID:    id,
 			})
 		}
@@ -278,7 +308,8 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         }
         .toc-sidebar {
             width: 250px;
-            min-width: 250px;
+            min-width: 150px;
+            max-width: 600px;
             background: #f8f9fa;
             border-{{if eq .TOCPosition "left"}}right{{else}}left{{end}}: 1px solid #ddd;
             padding: 20px;
@@ -286,6 +317,25 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             position: sticky;
             top: 0;
             overflow-y: auto;
+            {{if eq .TOCPosition "left"}}
+            resize: horizontal;
+            {{else}}
+            resize: horizontal;
+            {{end}}
+            overflow: auto;
+        }
+        .toc-sidebar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .toc-sidebar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        .toc-sidebar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        .toc-sidebar::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
         .toc-sidebar h3 {
             font-size: 0.9em;
