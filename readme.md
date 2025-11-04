@@ -110,29 +110,74 @@ go build -o mdserve mdserve.go
 docker pull awkto/mdserve:latest
 ```
 
-### Run with Docker
+### Quick Start - Run with Docker
 
-Serve markdown files from a directory:
+**Easiest way - serve current directory:**
 
 ```bash
-docker run -p 8080:8080 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest
+docker run -d -p 8080:8080 -v $(pwd):/docs:ro awkto/mdserve:latest
 ```
 
-Custom port:
+Then open `http://localhost:8080` in your browser.
+
+**Serve a specific directory:**
 
 ```bash
-docker run -p 3000:3000 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest /docs -port 3000
+docker run -d -p 8080:8080 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest
 ```
 
-With TOC on the right:
+**With a named container (easier to manage):**
 
 ```bash
-docker run -p 8080:8080 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest /docs -toc right
+# Start
+docker run -d --name mdserve -p 8080:8080 -v $(pwd):/docs:ro awkto/mdserve:latest
+
+# Stop
+docker stop mdserve
+
+# Start again
+docker start mdserve
+
+# Remove
+docker rm mdserve
+```
+
+**Custom port:**
+
+```bash
+docker run -d -p 3000:3000 -v $(pwd):/docs:ro awkto/mdserve:latest /docs -port 3000
+```
+
+**TOC on the right:**
+
+```bash
+docker run -d -p 8080:8080 -v $(pwd):/docs:ro awkto/mdserve:latest /docs -toc right
+```
+
+**All options combined:**
+
+```bash
+docker run -d --name mdserve -p 3000:3000 \
+  -v /path/to/your/docs:/docs:ro \
+  awkto/mdserve:latest \
+  /docs -port 3000 -toc right
+```
+
+**To stop/view running containers:**
+
+```bash
+# List running containers
+docker ps
+
+# Stop a container
+docker stop <container-id>
+# or
+docker stop mdserve
 ```
 
 ### Build Docker Image Locally
 
 ```bash
 docker build -t mdserve .
-docker run -p 8080:8080 -v /path/to/your/docs:/docs:ro mdserve
+docker run -d -p 8080:8080 -v $(pwd):/docs:ro mdserve
 ```
