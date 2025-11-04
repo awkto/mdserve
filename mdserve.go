@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
@@ -14,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/gomarkdown/markdown"
+	"github.com/gomarkdown/markdown/html"
+	"github.com/gomarkdown/markdown/parser"
 )
 
 var baseDir string
@@ -61,23 +64,45 @@ func cleanMarkdown(text string) string {
 	return strings.TrimSpace(text)
 }
 
+// Generate ID from text - matches gomarkdown's AutoHeadingIDs behavior
+func generateHeadingID(text string) string {
+	// Convert to lowercase
+	id := strings.ToLower(text)
+	// Replace spaces and some punctuation with hyphens
+	id = regexp.MustCompile(`[^\w\s-]`).ReplaceAllString(id, "")
+	id = regexp.MustCompile(`[\s_]+`).ReplaceAllString(id, "-")
+	id = strings.Trim(id, "-")
+	return id
+}
+
 // Extract headings from markdown content
 func extractHeadings(content []byte) []Heading {
 	var headings []Heading
 	lines := strings.Split(string(content), "\n")
 	headingRegex := regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
+	explicitIDRegex := regexp.MustCompile(`\s*\{#([^}]+)\}\s*$`)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if matches := headingRegex.FindStringSubmatch(line); matches != nil {
 			level := len(matches[1])
 			rawText := strings.TrimSpace(matches[2])
+			
+			// Check for explicit ID in format {#id}
+			var id string
+			if idMatches := explicitIDRegex.FindStringSubmatch(rawText); idMatches != nil {
+				id = idMatches[1]
+				// Remove the {#id} part from the text
+				rawText = explicitIDRegex.ReplaceAllString(rawText, "")
+				rawText = strings.TrimSpace(rawText)
+			}
+			
 			cleanText := cleanMarkdown(rawText)
 
-			// Create a simple ID from the cleaned text
-			id := strings.ToLower(cleanText)
-			id = regexp.MustCompile(`[^a-z0-9\s-]`).ReplaceAllString(id, "")
-			id = regexp.MustCompile(`\s+`).ReplaceAllString(id, "-")
+			// Generate ID to match gomarkdown's AutoHeadingIDs if no explicit ID
+			if id == "" {
+				id = generateHeadingID(cleanText)
+			}
 
 			headings = append(headings, Heading{
 				Level: level,
@@ -281,8 +306,13 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	// Extract headings for TOC
 	headings := extractHeadings(content)
 
-	// Convert markdown to HTML
-	htmlContent := markdown.ToHTML(content, nil, nil)
+	// Convert markdown to HTML with AutoHeadingIDs extension
+	extensions := parser.CommonExtensions | parser.AutoHeadingIDs
+	p := parser.NewWithExtensions(extensions)
+	htmlFlags := html.CommonFlags
+	opts := html.RendererOptions{Flags: htmlFlags}
+	renderer := html.NewRenderer(opts)
+	htmlContent := markdown.ToHTML(content, p, renderer)
 
 	tmpl := `
 <!DOCTYPE html>
@@ -343,12 +373,73 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             color: #666;
             margin-bottom: 15px;
             letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .toc-controls {
+            display: flex;
+            gap: 8px;
+        }
+        .toc-control-btn {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 1px solid #999;
+            background: transparent;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #666;
+            padding: 0;
+            transition: all 0.2s;
+        }
+        .toc-control-btn:hover {
+            background: #e8e8e8;
+            border-color: #666;
+            color: #333;
         }
         .toc-list {
             list-style: none;
         }
         .toc-list li {
             margin: 6px 0;
+            position: relative;
+        }
+        .toc-item {
+            display: flex;
+            align-items: center;
+        }
+        .toc-toggle {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+            margin-right: 4px;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 12px;
+            user-select: none;
+        }
+        .toc-toggle:hover {
+            color: #0066cc;
+        }
+        .toc-toggle.empty {
+            visibility: hidden;
+        }
+        .toc-children {
+            list-style: none;
+            padding-left: 20px;
+            margin-top: 4px;
+            border-left: 1px solid #ddd;
+            margin-left: 8px;
+        }
+        .toc-children.collapsed {
+            display: none;
         }
         .toc-list a {
             color: #333;
@@ -357,16 +448,19 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             padding: 4px 0;
             font-size: 0.9em;
             transition: color 0.2s;
+            flex: 1;
+            font-weight: normal;
         }
         .toc-list a:hover {
             color: #0066cc;
         }
-        .toc-level-1 { font-weight: 600; margin-left: 0; }
-        .toc-level-2 { margin-left: 16px; }
-        .toc-level-3 { margin-left: 32px; }
-        .toc-level-4 { margin-left: 48px; font-size: 0.85em; }
-        .toc-level-5 { margin-left: 64px; font-size: 0.85em; }
-        .toc-level-6 { margin-left: 80px; font-size: 0.85em; }
+        .toc-level-1 { padding-left: 0; }
+        .toc-level-1 > .toc-item > a { font-weight: 600; }
+        .toc-level-2 { padding-left: 0; }
+        .toc-level-3 { padding-left: 0; }
+        .toc-level-4 { padding-left: 0; }
+        .toc-level-5 { padding-left: 0; }
+        .toc-level-6 { padding-left: 0; }
         .main-content {
             flex: 1;
             max-width: 900px;
@@ -421,6 +515,29 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             margin-top: 24px;
             margin-bottom: 16px;
             scroll-margin-top: 20px;
+        }
+        .content h1 {
+            font-size: 2em;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 0.3em;
+        }
+        .content h2 {
+            font-size: 1.5em;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 0.3em;
+        }
+        .content h3 {
+            font-size: 1.25em;
+        }
+        .content h4 {
+            font-size: 1.1em;
+        }
+        .content h5 {
+            font-size: 1.05em;
+        }
+        .content h6 {
+            font-size: 1em;
+            font-weight: 600;
         }
         .raw-source {
             display: none;
@@ -478,6 +595,15 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         pre code {
             padding: 0;
         }
+        .content ul, .content ol {
+            margin-left: 20px;
+            padding-left: 20px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        .content li {
+            margin: 5px 0;
+        }
         blockquote {
             border-left: 4px solid #ddd;
             margin-left: 0;
@@ -515,11 +641,14 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 <body>
     {{if .Headings}}
     <div class="toc-sidebar">
-        <h3>Contents</h3>
-        <ul class="toc-list">
-        {{range .Headings}}
-            <li class="toc-level-{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>
-        {{end}}
+        <h3>
+            <span>Contents</span>
+            <div class="toc-controls">
+                <button class="toc-control-btn" onclick="expandAllToc()" title="Expand all">+</button>
+                <button class="toc-control-btn" onclick="collapseAllToc()" title="Collapse all">−</button>
+            </div>
+        </h3>
+        <ul class="toc-list" id="toc-root">
         </ul>
     </div>
     {{end}}
@@ -582,6 +711,29 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         let sharedScrollPos = 0;
         let highlightedContent = null;
 
+        // Expand/Collapse all TOC functions
+        function expandAllToc() {
+            document.querySelectorAll('.toc-children.collapsed').forEach(child => {
+                child.classList.remove('collapsed');
+            });
+            document.querySelectorAll('.toc-toggle').forEach(toggle => {
+                if (!toggle.classList.contains('empty')) {
+                    toggle.textContent = '▼';
+                }
+            });
+        }
+
+        function collapseAllToc() {
+            document.querySelectorAll('.toc-children').forEach(child => {
+                child.classList.add('collapsed');
+            });
+            document.querySelectorAll('.toc-toggle').forEach(toggle => {
+                if (!toggle.classList.contains('empty')) {
+                    toggle.textContent = '▶';
+                }
+            });
+        }
+
         // Toggle between rendered and source view
         function toggleView() {
             const renderedWrapper = document.querySelector('.main-content');
@@ -632,26 +784,119 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             }
         }
 
-        // Add IDs to headings for anchor links
+        // Add IDs to headings that don't have them (for explicit {#id} syntax)
+        // The markdown renderer already adds IDs for regular headings
         document.addEventListener('DOMContentLoaded', function() {
             const headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4, .content h5, .content h6');
-            const createId = (text) => {
-                return text.toLowerCase()
-                    .replace(/[^a-z0-9\s-]/g, '')
-                    .replace(/\s+/g, '-');
-            };
-
+            const explicitIdRegex = /\s*\{#([^}]+)\}\s*$/;
+            
             headings.forEach(heading => {
-                if (!heading.id) {
-                    heading.id = createId(heading.textContent);
+                const originalText = heading.textContent.trim();
+                
+                // Check if text has explicit ID marker {#id} - need to clean it up
+                if (explicitIdRegex.test(originalText)) {
+                    // The markdown library doesn't handle {#id} syntax, so we need to
+                    const match = explicitIdRegex.exec(originalText);
+                    if (match && !heading.id) {
+                        heading.id = match[1];
+                    }
+                    // Remove {#id} from display text
+                    heading.textContent = originalText.replace(explicitIdRegex, '').trim();
                 }
             });
+
+            // Build hierarchical TOC
+            const tocData = {{.HeadingsJSON}};
+            const tocRoot = document.getElementById('toc-root');
+            
+            if (tocRoot && tocData.length > 0) {
+                function buildTocTree(headings) {
+                    const root = [];
+                    const stack = [{ level: 0, children: root }];
+                    
+                    headings.forEach(heading => {
+                        const item = {
+                            level: heading.Level,
+                            text: heading.Text,
+                            id: heading.ID,
+                            children: []
+                        };
+                        
+                        // Pop stack until we find the parent level
+                        while (stack.length > 1 && stack[stack.length - 1].level >= heading.Level) {
+                            stack.pop();
+                        }
+                        
+                        // Add to parent's children
+                        stack[stack.length - 1].children.push(item);
+                        
+                        // Push this item onto stack for potential children
+                        stack.push(item);
+                    });
+                    
+                    return root;
+                }
+                
+                function createTocElement(item) {
+                    const li = document.createElement('li');
+                    li.className = 'toc-level-' + item.level;
+                    
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'toc-item';
+                    
+                    // Create toggle button if has children
+                    const toggle = document.createElement('span');
+                    toggle.className = 'toc-toggle';
+                    if (item.children.length > 0) {
+                        toggle.textContent = '▼';
+                        toggle.onclick = function(e) {
+                            e.stopPropagation();
+                            const childrenUl = li.querySelector('.toc-children');
+                            if (childrenUl) {
+                                childrenUl.classList.toggle('collapsed');
+                                toggle.textContent = childrenUl.classList.contains('collapsed') ? '▶' : '▼';
+                            }
+                        };
+                    } else {
+                        toggle.classList.add('empty');
+                    }
+                    
+                    // Create link
+                    const link = document.createElement('a');
+                    link.href = '#' + item.id;
+                    link.textContent = item.text;
+                    
+                    itemDiv.appendChild(toggle);
+                    itemDiv.appendChild(link);
+                    li.appendChild(itemDiv);
+                    
+                    // Add children if any
+                    if (item.children.length > 0) {
+                        const childrenUl = document.createElement('ul');
+                        childrenUl.className = 'toc-children';
+                        item.children.forEach(child => {
+                            childrenUl.appendChild(createTocElement(child));
+                        });
+                        li.appendChild(childrenUl);
+                    }
+                    
+                    return li;
+                }
+                
+                const tree = buildTocTree(tocData);
+                tree.forEach(item => {
+                    tocRoot.appendChild(createTocElement(item));
+                });
+            }
 
             // Smooth scroll
             document.querySelectorAll('.toc-list a').forEach(anchor => {
                 anchor.addEventListener('click', function(e) {
                     e.preventDefault();
-                    const target = document.querySelector(this.getAttribute('href'));
+                    const href = this.getAttribute('href');
+                    // Extract ID from href (remove the # prefix)
+                    const targetId = href.substring(1);
+                    const target = document.getElementById(targetId);
                     if (target) {
                         target.scrollIntoView({ behavior: 'smooth' });
                     }
@@ -662,18 +907,26 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`
 
+	// Convert headings to JSON for JavaScript
+	headingsJSON, err := json.Marshal(headings)
+	if err != nil {
+		headingsJSON = []byte("[]")
+	}
+
 	data := struct {
-		File        string
-		HTMLContent template.HTML
-		RawContent  string
-		Headings    []Heading
-		TOCPosition string
+		File         string
+		HTMLContent  template.HTML
+		RawContent   string
+		Headings     []Heading
+		HeadingsJSON template.JS
+		TOCPosition  string
 	}{
-		File:        file,
-		HTMLContent: template.HTML(htmlContent),
-		RawContent:  string(content),
-		Headings:    headings,
-		TOCPosition: tocPosition,
+		File:         file,
+		HTMLContent:  template.HTML(htmlContent),
+		RawContent:   string(content),
+		Headings:     headings,
+		HeadingsJSON: template.JS(headingsJSON),
+		TOCPosition:  tocPosition,
 	}
 
 	t, err := template.New("view").Parse(tmpl)
