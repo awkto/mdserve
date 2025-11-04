@@ -393,17 +393,25 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             text-decoration: underline;
         }
         .toggle-btn {
-            padding: 8px 16px;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
             background: #0066cc;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 0.9em;
-            transition: background 0.2s;
+            font-weight: 500;
+            transition: all 0.2s;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
         }
         .toggle-btn:hover {
             background: #0052a3;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            transform: translateY(-1px);
         }
         .content {
             margin-top: 20px;
@@ -416,15 +424,46 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         }
         .raw-source {
             display: none;
-            background: #f5f5f5;
-            padding: 20px;
-            border-radius: 5px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 60px 40px 40px 40px;
             white-space: pre-wrap;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 0.9em;
-            line-height: 1.5;
-            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow: auto;
+            z-index: 999;
+            box-sizing: border-box;
         }
+        .raw-source::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+        .raw-source::-webkit-scrollbar-track {
+            background: #252526;
+        }
+        .raw-source::-webkit-scrollbar-thumb {
+            background: #424242;
+            border-radius: 6px;
+        }
+        .raw-source::-webkit-scrollbar-thumb:hover {
+            background: #4e4e4e;
+        }
+        /* Markdown syntax highlighting */
+        .md-heading { color: #569cd6; font-weight: bold; }
+        .md-bold { color: #ce9178; font-weight: bold; }
+        .md-italic { color: #ce9178; font-style: italic; }
+        .md-code { color: #d16969; background: #2d2d2d; padding: 2px 4px; border-radius: 3px; }
+        .md-code-block { color: #d16969; background: #2d2d2d; display: block; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .md-link { color: #4ec9b0; }
+        .md-list { color: #c586c0; }
+        .md-quote { color: #6a9955; border-left: 3px solid #6a9955; padding-left: 10px; margin: 10px 0; display: block; }
+        .md-hr { color: #464646; }
         pre {
             background: #f5f5f5;
             padding: 15px;
@@ -484,48 +523,86 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         </ul>
     </div>
     {{end}}
+    <button class="toggle-btn" onclick="toggleView()">Show Source</button>
     <div class="main-content">
         <div class="header">
             <div class="header-left">
                 <a href="/">← Back to Index</a>
                 <h1>{{.File}}</h1>
             </div>
-            <button class="toggle-btn" onclick="toggleView()">Show Source</button>
         </div>
         <div class="content" id="rendered-content">
             {{.HTMLContent}}
         </div>
-        <div class="raw-source" id="raw-content">{{.RawContent}}</div>
     </div>
+    <div class="raw-source" id="raw-content"></div>
+    <textarea id="raw-markdown-data" style="display:none;">{{.RawContent}}</textarea>
     <script>
         let isShowingSource = false;
+        const rawMarkdown = document.getElementById('raw-markdown-data').value;
+
+        // Syntax highlight markdown
+        function highlightMarkdown(text) {
+            var escapeMap = {'&': '&amp;', '<': '&lt;', '>': '&gt;'};
+            text = text.replace(/[&<>]/g, function(m) { return escapeMap[m]; });
+
+            // Code blocks (triple backtick)
+            text = text.replace(/\x60\x60\x60[\s\S]*?\x60\x60\x60/g, function(match) {
+                return '<span class="md-code-block">' + match + '</span>';
+            });
+
+            // Inline code (single backtick)
+            text = text.replace(/\x60([^\x60]+)\x60/g, '<span class="md-code">$&</span>');
+
+            // Headings
+            text = text.replace(/^(#{1,6}\s+.+)$/gm, '<span class="md-heading">$1</span>');
+
+            // Bold
+            text = text.replace(/(\*\*|__)([^*_]+)(\*\*|__)/g, '<span class="md-bold">$1$2$3</span>');
+
+            // Italic
+            text = text.replace(/(\*|_)([^*_]+)(\*|_)/g, '<span class="md-italic">$1$2$3</span>');
+
+            // Links
+            text = text.replace(/\[([^\]]+)\]\([^\)]+\)/g, '<span class="md-link">$&</span>');
+
+            // List items
+            text = text.replace(/^(\s*[-*+]\s+)/gm, '<span class="md-list">$1</span>');
+
+            // Blockquotes
+            text = text.replace(/^(&gt;.+)$/gm, '<span class="md-quote">$1</span>');
+
+            // Horizontal rules
+            text = text.replace(/^([-*_]{3,})$/gm, '<span class="md-hr">$1</span>');
+
+            return text;
+        }
 
         // Toggle between rendered and source view
         function toggleView() {
-            const renderedContent = document.getElementById('rendered-content');
+            const renderedWrapper = document.querySelector('.main-content');
+            const tocSidebar = document.querySelector('.toc-sidebar');
             const rawContent = document.getElementById('raw-content');
             const toggleBtn = document.querySelector('.toggle-btn');
-            const mainContent = document.querySelector('.main-content');
-
-            // Save current scroll position
-            const scrollPos = mainContent.scrollTop;
 
             isShowingSource = !isShowingSource;
 
             if (isShowingSource) {
-                renderedContent.style.display = 'none';
+                // Show source view
+                if (tocSidebar) tocSidebar.style.display = 'none';
+                renderedWrapper.style.display = 'none';
+
+                // Populate and highlight raw content
+                rawContent.innerHTML = highlightMarkdown(rawMarkdown);
                 rawContent.style.display = 'block';
                 toggleBtn.textContent = 'Show Rendered';
             } else {
-                renderedContent.style.display = 'block';
+                // Show rendered view
+                if (tocSidebar) tocSidebar.style.display = 'block';
+                renderedWrapper.style.display = 'block';
                 rawContent.style.display = 'none';
                 toggleBtn.textContent = 'Show Source';
             }
-
-            // Restore scroll position after a brief delay to allow rendering
-            setTimeout(() => {
-                mainContent.scrollTop = scrollPos;
-            }, 0);
         }
 
         // Add IDs to headings for anchor links
