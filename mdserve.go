@@ -348,7 +348,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             list-style: none;
         }
         .toc-list li {
-            margin: 8px 0;
+            margin: 6px 0;
         }
         .toc-list a {
             color: #333;
@@ -361,12 +361,12 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         .toc-list a:hover {
             color: #0066cc;
         }
-        .toc-level-1 { padding-left: 0; font-weight: 600; }
-        .toc-level-2 { padding-left: 15px; }
-        .toc-level-3 { padding-left: 30px; }
-        .toc-level-4 { padding-left: 45px; font-size: 0.85em; }
-        .toc-level-5 { padding-left: 60px; font-size: 0.85em; }
-        .toc-level-6 { padding-left: 75px; font-size: 0.85em; }
+        .toc-level-1 { font-weight: 600; margin-left: 0; }
+        .toc-level-2 { margin-left: 16px; }
+        .toc-level-3 { margin-left: 32px; }
+        .toc-level-4 { margin-left: 48px; font-size: 0.85em; }
+        .toc-level-5 { margin-left: 64px; font-size: 0.85em; }
+        .toc-level-6 { margin-left: 80px; font-size: 0.85em; }
         .main-content {
             flex: 1;
             max-width: 900px;
@@ -448,7 +448,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         <h3>Contents</h3>
         <ul class="toc-list">
         {{range .Headings}}
-            <li><a href="#{{.ID}}" class="toc-level-{{.Level}}">{{.Text}}</a></li>
+            <li class="toc-level-{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>
         {{end}}
         </ul>
     </div>
