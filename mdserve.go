@@ -546,22 +546,22 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             var escapeMap = {'&': '&amp;', '<': '&lt;', '>': '&gt;'};
             text = text.replace(/[&<>]/g, function(m) { return escapeMap[m]; });
 
-            // Code blocks (triple backtick)
-            text = text.replace(/\x60\x60\x60[\s\S]*?\x60\x60\x60/g, function(match) {
-                return '<span class="md-code-block">' + match + '</span>';
+            // Code blocks (triple backtick) - must be at start of line
+            text = text.replace(/^(\x60\x60\x60[^\n]*\n)([\s\S]*?)^(\x60\x60\x60)$/gm, function(match, open, content, close) {
+                return '<span class="md-code-block">' + open + content + close + '</span>';
             });
 
             // Inline code (single backtick)
-            text = text.replace(/\x60([^\x60]+)\x60/g, '<span class="md-code">$&</span>');
+            text = text.replace(/\x60([^\x60\n]+)\x60/g, '<span class="md-code">$&</span>');
 
             // Headings
             text = text.replace(/^(#{1,6}\s+.+)$/gm, '<span class="md-heading">$1</span>');
 
             // Bold
-            text = text.replace(/(\*\*|__)([^*_]+)(\*\*|__)/g, '<span class="md-bold">$1$2$3</span>');
+            text = text.replace(/(\*\*|__)([^*_\n]+)(\*\*|__)/g, '<span class="md-bold">$1$2$3</span>');
 
             // Italic
-            text = text.replace(/(\*|_)([^*_]+)(\*|_)/g, '<span class="md-italic">$1$2$3</span>');
+            text = text.replace(/(\*|_)([^*_\n]+)(\*|_)/g, '<span class="md-italic">$1$2$3</span>');
 
             // Links
             text = text.replace(/\[([^\]]+)\]\([^\)]+\)/g, '<span class="md-link">$&</span>');
