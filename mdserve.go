@@ -585,9 +585,26 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             const rawContent = document.getElementById('raw-content');
             const toggleBtn = document.querySelector('.toggle-btn');
 
-            isShowingSource = !isShowingSource;
+            let scrollPos;
 
             if (isShowingSource) {
+                // Switching from source to rendered - save source scroll position
+                scrollPos = rawContent.scrollTop;
+
+                // Show rendered view
+                if (tocSidebar) tocSidebar.style.display = 'block';
+                renderedWrapper.style.display = 'block';
+                rawContent.style.display = 'none';
+                toggleBtn.textContent = 'Show Source';
+
+                // Restore scroll position to rendered view
+                setTimeout(function() {
+                    renderedWrapper.scrollTop = scrollPos;
+                }, 0);
+            } else {
+                // Switching from rendered to source - save rendered scroll position
+                scrollPos = renderedWrapper.scrollTop;
+
                 // Show source view
                 if (tocSidebar) tocSidebar.style.display = 'none';
                 renderedWrapper.style.display = 'none';
@@ -596,13 +613,14 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                 rawContent.innerHTML = highlightMarkdown(rawMarkdown);
                 rawContent.style.display = 'block';
                 toggleBtn.textContent = 'Show Rendered';
-            } else {
-                // Show rendered view
-                if (tocSidebar) tocSidebar.style.display = 'block';
-                renderedWrapper.style.display = 'block';
-                rawContent.style.display = 'none';
-                toggleBtn.textContent = 'Show Source';
+
+                // Restore scroll position to source view
+                setTimeout(function() {
+                    rawContent.scrollTop = scrollPos;
+                }, 0);
             }
+
+            isShowingSource = !isShowingSource;
         }
 
         // Add IDs to headings for anchor links
