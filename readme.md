@@ -101,3 +101,38 @@ go run mdserve.go /path/to/docs -port 3000 -toc right
 go build -o mdserve mdserve.go
 ./mdserve /path/to/docs
 ```
+
+## Docker Usage
+
+### Pull from Docker Hub
+
+```bash
+docker pull awkto/mdserve:latest
+```
+
+### Run with Docker
+
+Serve markdown files from a directory:
+
+```bash
+docker run -p 8080:8080 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest
+```
+
+Custom port:
+
+```bash
+docker run -p 3000:3000 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest /docs -port 3000
+```
+
+With TOC on the right:
+
+```bash
+docker run -p 8080:8080 -v /path/to/your/docs:/docs:ro awkto/mdserve:latest /docs -toc right
+```
+
+### Build Docker Image Locally
+
+```bash
+docker build -t mdserve .
+docker run -p 8080:8080 -v /path/to/your/docs:/docs:ro mdserve
+```
