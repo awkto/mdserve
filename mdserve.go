@@ -580,6 +580,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 
         // Shared scroll position
         let sharedScrollPos = 0;
+        let highlightedContent = null;
 
         // Toggle between rendered and source view
         function toggleView() {
@@ -589,40 +590,43 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             const toggleBtn = document.querySelector('.toggle-btn');
 
             if (isShowingSource) {
-                // Switching from source to rendered - save source scroll position
+                // Currently showing source, switch to rendered
+                // Save current scroll position from source
                 sharedScrollPos = rawContent.scrollTop;
 
-                // Show rendered view
+                // Hide source, show rendered
+                rawContent.style.display = 'none';
                 if (tocSidebar) tocSidebar.style.display = 'block';
                 renderedWrapper.style.display = 'block';
-                rawContent.style.display = 'none';
                 toggleBtn.textContent = 'Show Source';
                 isShowingSource = false;
 
-                // Restore scroll position to rendered view
-                setTimeout(function() {
+                // Restore scroll position
+                requestAnimationFrame(function() {
                     renderedWrapper.scrollTop = sharedScrollPos;
-                }, 0);
+                });
             } else {
-                // Switching from rendered to source - save rendered scroll position
+                // Currently showing rendered, switch to source
+                // Save current scroll position from rendered
                 sharedScrollPos = renderedWrapper.scrollTop;
 
-                // Show source view
-                if (tocSidebar) tocSidebar.style.display = 'none';
-                renderedWrapper.style.display = 'none';
-
-                // Populate and highlight raw content (only first time or when needed)
-                if (!rawContent.innerHTML) {
-                    rawContent.innerHTML = highlightMarkdown(rawMarkdown);
+                // Populate highlighted content if not already done
+                if (!highlightedContent) {
+                    highlightedContent = highlightMarkdown(rawMarkdown);
                 }
+                rawContent.innerHTML = highlightedContent;
+
+                // Hide rendered, show source
+                renderedWrapper.style.display = 'none';
+                if (tocSidebar) tocSidebar.style.display = 'none';
                 rawContent.style.display = 'block';
                 toggleBtn.textContent = 'Show Rendered';
                 isShowingSource = true;
 
-                // Restore scroll position to source view
-                setTimeout(function() {
+                // Restore scroll position
+                requestAnimationFrame(function() {
                     rawContent.scrollTop = sharedScrollPos;
-                }, 0);
+                });
             }
         }
 
