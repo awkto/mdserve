@@ -1,242 +1,344 @@
 package main
 
 import (
-    "bufio"
-    "fmt"
-    "html/template"
-    "io/ioutil"
-    "log"
-    "net/http"
-    "os"
-    "os/exec"
-    "os/signal"
-    "path/filepath"
-    "strings"
-    "syscall"
-    "github.com/gomarkdown/markdown"
+	"flag"
+	"fmt"
+	"html/template"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/gomarkdown/markdown"
 )
 
-var encryptionPassword string // Holds the password fetched from the file
-const adminUsername = "admin" // Admin username
+var baseDir string
 
-// Read the password from a file
-func readPasswordFromFile(filePath string) (string, error) {
-    file, err := os.Open(filePath)
-    if err != nil {
-        return "", fmt.Errorf("could not open password file: %v", err)
-    }
-    defer file.Close()
-
-    scanner := bufio.NewScanner(file)
-    if scanner.Scan() {
-        return scanner.Text(), nil
-    }
-    return "", fmt.Errorf("password file is empty")
+// FileInfo represents a file or directory for the index
+type FileInfo struct {
+	Name        string
+	Path        string
+	IsDirectory bool
 }
 
-// Decrypt all GPG files at startup
-func decryptAllGPGFiles() error {
-    err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-        if err != nil {
-            return err
+// Index handler - lists all markdown files and directories
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	var files []FileInfo
+	var dirs []FileInfo
+
+	err := filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip hidden files and directories
+		if strings.HasPrefix(info.Name(), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		relPath, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip the base directory itself
+		if relPath == "." {
+			return nil
+		}
+
+		if info.IsDir() {
+			dirs = append(dirs, FileInfo{
+				Name:        relPath,
+				Path:        relPath,
+				IsDirectory: true,
+			})
+		} else if strings.HasSuffix(info.Name(), ".md") {
+			files = append(files, FileInfo{
+				Name:        relPath,
+				Path:        relPath,
+				IsDirectory: false,
+			})
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error listing files: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Sort directories and files
+	sort.Slice(dirs, func(i, j int) bool {
+		return dirs[i].Name < dirs[j].Name
+	})
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name < files[j].Name
+	})
+
+	tmpl := `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Markdown Server</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
         }
-        if strings.HasSuffix(path, ".gpg") {
-            outputFile := strings.TrimSuffix(path, ".gpg")
-            cmd := exec.Command("gpg", "--batch", "--yes", "--passphrase", encryptionPassword, 
-                                "-o", outputFile, "-d", path)
-            if err := cmd.Run(); err != nil {
-                return fmt.Errorf("Failed to decrypt %s: %v", path, err)
-            }
-            log.Printf("Decrypted: %s", path)
+        h1 {
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
         }
-        return nil
-    })
-    return err
-}
-
-
-// Delete all Markdown files except README.md on exit
-func deleteAllMarkdownFiles() {
-    err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-        if err != nil {
-            return err
+        .section {
+            margin: 30px 0;
         }
-
-        if strings.HasSuffix(path, ".md") && !strings.EqualFold(path, "README.md") {
-            if err := os.Remove(path); err != nil {
-                return fmt.Errorf("Failed to delete %s: %v", path, err)
-            }
-            log.Printf("Deleted: %s", path)
+        .section h2 {
+            color: #555;
+            font-size: 1.3em;
         }
-        return nil
-    })
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+        li {
+            padding: 8px 0;
+        }
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .directory {
+            font-weight: bold;
+        }
+        .directory::before {
+            content: "📁 ";
+        }
+        .file::before {
+            content: "📄 ";
+        }
+    </style>
+</head>
+<body>
+    <h1>Markdown Files</h1>
 
-    if err != nil {
-        log.Printf("Error during markdown cleanup: %v", err)
-    } else {
-        log.Println("All markdown files (except README.md) deleted.")
-    }
+    {{if .Dirs}}
+    <div class="section">
+        <h2>Directories</h2>
+        <ul>
+        {{range .Dirs}}
+            <li><span class="directory">{{.Name}}/</span></li>
+        {{end}}
+        </ul>
+    </div>
+    {{end}}
+
+    <div class="section">
+        <h2>Files</h2>
+        {{if .Files}}
+        <ul>
+        {{range .Files}}
+            <li><a href="/view/{{.Path}}" class="file">{{.Name}}</a></li>
+        {{end}}
+        </ul>
+        {{else}}
+        <p>No markdown files found.</p>
+        {{end}}
+    </div>
+</body>
+</html>`
+
+	data := struct {
+		Dirs  []FileInfo
+		Files []FileInfo
+	}{
+		Dirs:  dirs,
+		Files: files,
+	}
+
+	t, err := template.New("index").Parse(tmpl)
+	if err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+	t.Execute(w, data)
 }
 
-
-
-// Handle signals to ensure cleanup on exit
-func handleExit() {
-    c := make(chan os.Signal, 1)
-    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-    go func() {
-        <-c
-        log.Println("Shutting down, cleaning up markdown files...")
-        deleteAllMarkdownFiles()
-        os.Exit(0)
-    }()
-}
-
-// Basic authentication check
-func checkAuth(r *http.Request) bool {
-    username, password, ok := r.BasicAuth()
-    return ok && username == adminUsername && password == encryptionPassword
-}
-
-// Encrypt a file using GPG
-func encryptFile(file string) error {
-    cmd := exec.Command("gpg", "--batch", "--yes", "--passphrase", encryptionPassword, "-c", file)
-    if err := cmd.Run(); err != nil {
-        return fmt.Errorf("GPG encryption failed: %v", err)
-    }
-    return nil
-}
-
-// View handler with authentication
+// View handler - renders markdown files
 func viewHandler(w http.ResponseWriter, r *http.Request) {
-    if !checkAuth(r) {
-        w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-        http.Error(w, "Unauthorized.", http.StatusUnauthorized)
-        return
-    }
+	// Extract the file path from URL
+	file := r.URL.Path[len("/view/"):]
+	if file == "" {
+		http.Error(w, "File not specified", http.StatusBadRequest)
+		return
+	}
 
-    file := r.URL.Path[1:]
-    if file == "" {
-        file = "index.md"
-    }
+	// Construct full path
+	fullPath := filepath.Join(baseDir, file)
 
-    content, err := ioutil.ReadFile(file)
-    if err != nil {
-        http.Error(w, "File not found", http.StatusNotFound)
-        return
-    }
+	// Security check: ensure the resolved path is within baseDir
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	absBaseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		http.Error(w, "Server configuration error", http.StatusInternalServerError)
+		return
+	}
+	if !strings.HasPrefix(absPath, absBaseDir) {
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
 
-    htmlContent := markdown.ToHTML(content, nil, nil)
-    tmpl := `
-    <html>
-    <body>
-        <a href="/edit/{{.File}}">Edit this file</a>
-        <h1>Preview</h1>
-        <div>{{.HTMLContent}}</div>
-    </body>
-    </html>`
+	// Read the file
+	content, err := ioutil.ReadFile(fullPath)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
 
-    data := struct {
-        File        string
-        HTMLContent template.HTML
-    }{
-        File:        file,
-        HTMLContent: template.HTML(htmlContent),
-    }
+	// Convert markdown to HTML
+	htmlContent := markdown.ToHTML(content, nil, nil)
 
-    t, _ := template.New("view").Parse(tmpl)
-    t.Execute(w, data)
-}
-
-// Edit handler with authentication
-func editHandler(w http.ResponseWriter, r *http.Request) {
-    if !checkAuth(r) {
-        w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-        http.Error(w, "Unauthorized.", http.StatusUnauthorized)
-        return
-    }
-
-    file := r.URL.Path[len("/edit/"):]
-    if file == "" {
-        http.Error(w, "File not specified", http.StatusBadRequest)
-        return
-    }
-
-    if r.Method == http.MethodPost {
-        newContent := r.FormValue("content")
-        err := ioutil.WriteFile(file, []byte(newContent), 0644)
-        if err != nil {
-            http.Error(w, "Could not save file", http.StatusInternalServerError)
-            return
+	tmpl := `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{{.File}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
         }
-
-        // Encrypt the file after saving
-        err = encryptFile(file)
-        if err != nil {
-            log.Printf("Encryption error: %v", err)
-            http.Error(w, "Encryption failed", http.StatusInternalServerError)
-            return
+        .header {
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
         }
+        .header a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        .header a:hover {
+            text-decoration: underline;
+        }
+        .content {
+            margin-top: 20px;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        pre code {
+            padding: 0;
+        }
+        blockquote {
+            border-left: 4px solid #ddd;
+            margin-left: 0;
+            padding-left: 20px;
+            color: #666;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f5f5f5;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a href="/">← Back to Index</a>
+        <h1>{{.File}}</h1>
+    </div>
+    <div class="content">
+        {{.HTMLContent}}
+    </div>
+</body>
+</html>`
 
-        http.Redirect(w, r, "/"+file, http.StatusSeeOther)
-        return
-    }
+	data := struct {
+		File        string
+		HTMLContent template.HTML
+	}{
+		File:        file,
+		HTMLContent: template.HTML(htmlContent),
+	}
 
-    content, err := ioutil.ReadFile(file)
-    if err != nil {
-        http.Error(w, "File not found", http.StatusNotFound)
-        return
-    }
-
-    tmpl := `
-    <html>
-    <body>
-        <h1>Edit {{.File}}</h1>
-        <form method="POST" action="/edit/{{.File}}">
-            <textarea name="content" rows="20" cols="80">{{.RawContent}}</textarea><br>
-            <input type="submit" value="Save">
-        </form>
-        <a href="/{{.File}}">Cancel</a>
-    </body>
-    </html>`
-
-    data := struct {
-        File       string
-        RawContent string
-    }{
-        File:       file,
-        RawContent: string(content),
-    }
-
-    t, _ := template.New("edit").Parse(tmpl)
-    t.Execute(w, data)
+	t, err := template.New("view").Parse(tmpl)
+	if err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+	t.Execute(w, data)
 }
 
 func main() {
-    // Read password from file
-    var err error
-    encryptionPassword, err = readPasswordFromFile(".secret.key")
-    if err != nil {
-        log.Fatalf("Failed to read password: %v", err)
-    }
+	// Command-line flags
+	dir := flag.String("dir", ".", "Directory to serve markdown files from")
+	port := flag.String("port", "8080", "Port to serve on")
+	flag.Parse()
 
-    // Decrypt all GPG files at startup
-    if err := decryptAllGPGFiles(); err != nil {
-        log.Fatalf("Failed to decrypt files: %v", err)
-    }
+	// Set the base directory
+	// If there's a positional argument, use it as the directory
+	selectedDir := *dir
+	if flag.NArg() > 0 {
+		selectedDir = flag.Arg(0)
+	}
 
-    // Handle graceful exit for cleanup
-    handleExit()
+	var err error
+	baseDir, err = filepath.Abs(selectedDir)
+	if err != nil {
+		log.Fatalf("Invalid directory: %v", err)
+	}
 
-    port := "8080"
-    if len(os.Args) > 1 {
-        port = os.Args[1]
-    }
+	// Check if directory exists
+	info, err := os.Stat(baseDir)
+	if err != nil {
+		log.Fatalf("Directory does not exist: %v", err)
+	}
+	if !info.IsDir() {
+		log.Fatalf("Path is not a directory: %s", baseDir)
+	}
 
-    http.HandleFunc("/", viewHandler)
-    http.HandleFunc("/edit/", editHandler)
+	// Set up routes
+	http.HandleFunc("/", indexHandler)
+	http.HandleFunc("/view/", viewHandler)
 
-    fmt.Printf("Serving on http://localhost:%s\n", port)
-    log.Fatal(http.ListenAndServe(":"+port, nil))
+	fmt.Printf("Serving markdown files from: %s\n", baseDir)
+	fmt.Printf("Server running at http://localhost:%s\n", *port)
+	log.Fatal(http.ListenAndServe(":"+*port, nil))
 }
-
