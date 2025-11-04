@@ -377,6 +377,13 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             border-bottom: 1px solid #ddd;
             padding-bottom: 10px;
             margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-left {
+            display: flex;
+            flex-direction: column;
         }
         .header a {
             color: #0066cc;
@@ -384,6 +391,19 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         }
         .header a:hover {
             text-decoration: underline;
+        }
+        .toggle-btn {
+            padding: 8px 16px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.2s;
+        }
+        .toggle-btn:hover {
+            background: #0052a3;
         }
         .content {
             margin-top: 20px;
@@ -393,6 +413,17 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             margin-top: 24px;
             margin-bottom: 16px;
             scroll-margin-top: 20px;
+        }
+        .raw-source {
+            display: none;
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9em;
+            line-height: 1.5;
+            overflow-x: auto;
         }
         pre {
             background: #f5f5f5;
@@ -455,14 +486,48 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
     {{end}}
     <div class="main-content">
         <div class="header">
-            <a href="/">← Back to Index</a>
-            <h1>{{.File}}</h1>
+            <div class="header-left">
+                <a href="/">← Back to Index</a>
+                <h1>{{.File}}</h1>
+            </div>
+            <button class="toggle-btn" onclick="toggleView()">Show Source</button>
         </div>
-        <div class="content">
+        <div class="content" id="rendered-content">
             {{.HTMLContent}}
         </div>
+        <div class="raw-source" id="raw-content">{{.RawContent}}</div>
     </div>
     <script>
+        let isShowingSource = false;
+
+        // Toggle between rendered and source view
+        function toggleView() {
+            const renderedContent = document.getElementById('rendered-content');
+            const rawContent = document.getElementById('raw-content');
+            const toggleBtn = document.querySelector('.toggle-btn');
+            const mainContent = document.querySelector('.main-content');
+
+            // Save current scroll position
+            const scrollPos = mainContent.scrollTop;
+
+            isShowingSource = !isShowingSource;
+
+            if (isShowingSource) {
+                renderedContent.style.display = 'none';
+                rawContent.style.display = 'block';
+                toggleBtn.textContent = 'Show Rendered';
+            } else {
+                renderedContent.style.display = 'block';
+                rawContent.style.display = 'none';
+                toggleBtn.textContent = 'Show Source';
+            }
+
+            // Restore scroll position after a brief delay to allow rendering
+            setTimeout(() => {
+                mainContent.scrollTop = scrollPos;
+            }, 0);
+        }
+
         // Add IDs to headings for anchor links
         document.addEventListener('DOMContentLoaded', function() {
             const headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4, .content h5, .content h6');
@@ -496,11 +561,13 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		File        string
 		HTMLContent template.HTML
+		RawContent  string
 		Headings    []Heading
 		TOCPosition string
 	}{
 		File:        file,
 		HTMLContent: template.HTML(htmlContent),
+		RawContent:  string(content),
 		Headings:    headings,
 		TOCPosition: tocPosition,
 	}
