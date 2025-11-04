@@ -591,7 +591,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 
             if (isShowingSource) {
                 // Currently showing source, switch to rendered
-                // Save current scroll position from source
+                // Save current scroll position from source (it scrolls on itself)
                 sharedScrollPos = rawContent.scrollTop;
 
                 // Hide source, show rendered
@@ -601,29 +601,31 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                 toggleBtn.textContent = 'Show Source';
                 isShowingSource = false;
 
-                // Restore scroll position
+                // Restore scroll position to window (rendered view scrolls on window)
                 requestAnimationFrame(function() {
-                    renderedWrapper.scrollTop = sharedScrollPos;
+                    window.scrollTo(0, sharedScrollPos);
                 });
             } else {
                 // Currently showing rendered, switch to source
-                // Save current scroll position from rendered
-                sharedScrollPos = renderedWrapper.scrollTop;
+                // Save current scroll position from window (rendered view scrolls on window)
+                sharedScrollPos = window.pageYOffset || document.documentElement.scrollTop;
 
                 // Populate highlighted content if not already done
                 if (!highlightedContent) {
                     highlightedContent = highlightMarkdown(rawMarkdown);
                 }
+
+                // Show source first, THEN set content and scroll
+                rawContent.style.display = 'block';
                 rawContent.innerHTML = highlightedContent;
 
-                // Hide rendered, show source
+                // Hide rendered
                 renderedWrapper.style.display = 'none';
                 if (tocSidebar) tocSidebar.style.display = 'none';
-                rawContent.style.display = 'block';
                 toggleBtn.textContent = 'Show Rendered';
                 isShowingSource = true;
 
-                // Restore scroll position
+                // Restore scroll position to rawContent (it scrolls on itself)
                 requestAnimationFrame(function() {
                     rawContent.scrollTop = sharedScrollPos;
                 });
