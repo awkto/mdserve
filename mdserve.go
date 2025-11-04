@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -16,12 +17,47 @@ import (
 )
 
 var baseDir string
+var tocPosition string
 
 // FileInfo represents a file or directory for the index
 type FileInfo struct {
 	Name        string
 	Path        string
 	IsDirectory bool
+}
+
+// Heading represents a markdown heading for TOC
+type Heading struct {
+	Level int
+	Text  string
+	ID    string
+}
+
+// Extract headings from markdown content
+func extractHeadings(content []byte) []Heading {
+	var headings []Heading
+	lines := strings.Split(string(content), "\n")
+	headingRegex := regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if matches := headingRegex.FindStringSubmatch(line); matches != nil {
+			level := len(matches[1])
+			text := strings.TrimSpace(matches[2])
+			// Create a simple ID from the heading text
+			id := strings.ToLower(text)
+			id = regexp.MustCompile(`[^a-z0-9\s-]`).ReplaceAllString(id, "")
+			id = regexp.MustCompile(`\s+`).ReplaceAllString(id, "-")
+
+			headings = append(headings, Heading{
+				Level: level,
+				Text:  text,
+				ID:    id,
+			})
+		}
+	}
+
+	return headings
 }
 
 // Index handler - lists all markdown files and directories
@@ -212,6 +248,9 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract headings for TOC
+	headings := extractHeadings(content)
+
 	// Convert markdown to HTML
 	htmlContent := markdown.ToHTML(content, nil, nil)
 
@@ -222,12 +261,67 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
     <meta charset="UTF-8">
     <title>{{.File}}</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 20px;
             line-height: 1.6;
+            display: flex;
+            {{if eq .TOCPosition "left"}}
+            flex-direction: row;
+            {{else}}
+            flex-direction: row-reverse;
+            {{end}}
+        }
+        .toc-sidebar {
+            width: 250px;
+            min-width: 250px;
+            background: #f8f9fa;
+            border-{{if eq .TOCPosition "left"}}right{{else}}left{{end}}: 1px solid #ddd;
+            padding: 20px;
+            height: 100vh;
+            position: sticky;
+            top: 0;
+            overflow-y: auto;
+        }
+        .toc-sidebar h3 {
+            font-size: 0.9em;
+            text-transform: uppercase;
+            color: #666;
+            margin-bottom: 15px;
+            letter-spacing: 0.5px;
+        }
+        .toc-list {
+            list-style: none;
+        }
+        .toc-list li {
+            margin: 8px 0;
+        }
+        .toc-list a {
+            color: #333;
+            text-decoration: none;
+            display: block;
+            padding: 4px 0;
+            font-size: 0.9em;
+            transition: color 0.2s;
+        }
+        .toc-list a:hover {
+            color: #0066cc;
+        }
+        .toc-level-1 { padding-left: 0; font-weight: 600; }
+        .toc-level-2 { padding-left: 15px; }
+        .toc-level-3 { padding-left: 30px; }
+        .toc-level-4 { padding-left: 45px; font-size: 0.85em; }
+        .toc-level-5 { padding-left: 60px; font-size: 0.85em; }
+        .toc-level-6 { padding-left: 75px; font-size: 0.85em; }
+        .main-content {
+            flex: 1;
+            max-width: 900px;
+            padding: 20px 40px;
+            overflow-x: auto;
         }
         .header {
             border-bottom: 1px solid #ddd;
@@ -243,6 +337,12 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         }
         .content {
             margin-top: 20px;
+        }
+        .content h1, .content h2, .content h3,
+        .content h4, .content h5, .content h6 {
+            margin-top: 24px;
+            margin-bottom: 16px;
+            scroll-margin-top: 20px;
         }
         pre {
             background: #f5f5f5;
@@ -263,6 +363,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             margin-left: 0;
             padding-left: 20px;
             color: #666;
+            margin: 15px 0;
         }
         table {
             border-collapse: collapse;
@@ -277,25 +378,81 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         th {
             background-color: #f5f5f5;
         }
+        @media (max-width: 768px) {
+            body {
+                flex-direction: column;
+            }
+            .toc-sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                border: none;
+                border-bottom: 1px solid #ddd;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <a href="/">← Back to Index</a>
-        <h1>{{.File}}</h1>
+    {{if .Headings}}
+    <div class="toc-sidebar">
+        <h3>Contents</h3>
+        <ul class="toc-list">
+        {{range .Headings}}
+            <li><a href="#{{.ID}}" class="toc-level-{{.Level}}">{{.Text}}</a></li>
+        {{end}}
+        </ul>
     </div>
-    <div class="content">
-        {{.HTMLContent}}
+    {{end}}
+    <div class="main-content">
+        <div class="header">
+            <a href="/">← Back to Index</a>
+            <h1>{{.File}}</h1>
+        </div>
+        <div class="content">
+            {{.HTMLContent}}
+        </div>
     </div>
+    <script>
+        // Add IDs to headings for anchor links
+        document.addEventListener('DOMContentLoaded', function() {
+            const headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4, .content h5, .content h6');
+            const createId = (text) => {
+                return text.toLowerCase()
+                    .replace(/[^a-z0-9\s-]/g, '')
+                    .replace(/\s+/g, '-');
+            };
+
+            headings.forEach(heading => {
+                if (!heading.id) {
+                    heading.id = createId(heading.textContent);
+                }
+            });
+
+            // Smooth scroll
+            document.querySelectorAll('.toc-list a').forEach(anchor => {
+                anchor.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const target = document.querySelector(this.getAttribute('href'));
+                    if (target) {
+                        target.scrollIntoView({ behavior: 'smooth' });
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>`
 
 	data := struct {
 		File        string
 		HTMLContent template.HTML
+		Headings    []Heading
+		TOCPosition string
 	}{
 		File:        file,
 		HTMLContent: template.HTML(htmlContent),
+		Headings:    headings,
+		TOCPosition: tocPosition,
 	}
 
 	t, err := template.New("view").Parse(tmpl)
@@ -310,6 +467,7 @@ func main() {
 	// Command-line flags
 	dir := flag.String("dir", ".", "Directory to serve markdown files from")
 	port := flag.String("port", "8080", "Port to serve on")
+	toc := flag.String("toc", "left", "Table of contents position: 'left' or 'right'")
 	flag.Parse()
 
 	// Set the base directory
@@ -317,6 +475,13 @@ func main() {
 	selectedDir := *dir
 	if flag.NArg() > 0 {
 		selectedDir = flag.Arg(0)
+	}
+
+	// Set TOC position
+	tocPosition = *toc
+	if tocPosition != "left" && tocPosition != "right" {
+		log.Printf("Warning: Invalid TOC position '%s', using 'left'", tocPosition)
+		tocPosition = "left"
 	}
 
 	var err error
@@ -339,6 +504,7 @@ func main() {
 	http.HandleFunc("/view/", viewHandler)
 
 	fmt.Printf("Serving markdown files from: %s\n", baseDir)
+	fmt.Printf("Table of contents position: %s\n", tocPosition)
 	fmt.Printf("Server running at http://localhost:%s\n", *port)
 	log.Fatal(http.ListenAndServe(":"+*port, nil))
 }
