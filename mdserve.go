@@ -68,9 +68,13 @@ func cleanMarkdown(text string) string {
 func generateHeadingID(text string) string {
 	// Convert to lowercase
 	id := strings.ToLower(text)
-	// Replace spaces and some punctuation with hyphens
-	id = regexp.MustCompile(`[^\w\s-]`).ReplaceAllString(id, "")
+	// Replace non-alphanumeric characters (except spaces, hyphens) with hyphens
+	// This matches gomarkdown's behavior more closely
+	id = regexp.MustCompile(`[^\w\s-]+`).ReplaceAllString(id, "-")
+	// Replace spaces and underscores with hyphens
 	id = regexp.MustCompile(`[\s_]+`).ReplaceAllString(id, "-")
+	// Remove any consecutive hyphens
+	id = regexp.MustCompile(`-+`).ReplaceAllString(id, "-")
 	id = strings.Trim(id, "-")
 	return id
 }
@@ -81,13 +85,26 @@ func extractHeadings(content []byte) []Heading {
 	lines := strings.Split(string(content), "\n")
 	headingRegex := regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
 	explicitIDRegex := regexp.MustCompile(`\s*\{#([^}]+)\}\s*$`)
+	codeBlockRegex := regexp.MustCompile(`^\s*` + "`" + `{3,}`)
 
+	inCodeBlock := false
 	for _, line := range lines {
+		// Check if we're entering or exiting a code block
+		if codeBlockRegex.MatchString(line) {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+
+		// Skip processing if we're inside a code block
+		if inCodeBlock {
+			continue
+		}
+
 		line = strings.TrimSpace(line)
 		if matches := headingRegex.FindStringSubmatch(line); matches != nil {
 			level := len(matches[1])
 			rawText := strings.TrimSpace(matches[2])
-			
+
 			// Check for explicit ID in format {#id}
 			var id string
 			if idMatches := explicitIDRegex.FindStringSubmatch(rawText); idMatches != nil {
@@ -96,12 +113,18 @@ func extractHeadings(content []byte) []Heading {
 				rawText = explicitIDRegex.ReplaceAllString(rawText, "")
 				rawText = strings.TrimSpace(rawText)
 			}
-			
+
 			cleanText := cleanMarkdown(rawText)
 
 			// Generate ID to match gomarkdown's AutoHeadingIDs if no explicit ID
 			if id == "" {
 				id = generateHeadingID(cleanText)
+			}
+
+			// Prefix numeric IDs to match the JavaScript fix in the rendered HTML
+			// HTML IDs cannot start with a digit
+			if len(id) > 0 && id[0] >= '0' && id[0] <= '9' {
+				id = "heading-" + id
 			}
 
 			headings = append(headings, Heading{
@@ -676,14 +699,18 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             text = text.replace(/[&<>]/g, function(m) { return escapeMap[m]; });
 
             // Code blocks (triple backtick) - must be at start of line
+            // Use a placeholder to protect code blocks from other replacements
+            var codeBlocks = [];
             text = text.replace(/^(\x60\x60\x60[^\n]*\n)([\s\S]*?)^(\x60\x60\x60)$/gm, function(match, open, content, close) {
-                return '<span class="md-code-block">' + open + content + close + '</span>';
+                var placeholder = '___CODE_BLOCK_' + codeBlocks.length + '___';
+                codeBlocks.push('<span class="md-code-block">' + open + content + close + '</span>');
+                return placeholder;
             });
 
             // Inline code (single backtick)
             text = text.replace(/\x60([^\x60\n]+)\x60/g, '<span class="md-code">$&</span>');
 
-            // Headings
+            // Headings (only outside of code blocks, now that they're replaced with placeholders)
             text = text.replace(/^(#{1,6}\s+.+)$/gm, '<span class="md-heading">$1</span>');
 
             // Bold
@@ -703,6 +730,11 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 
             // Horizontal rules
             text = text.replace(/^([-*_]{3,})$/gm, '<span class="md-hr">$1</span>');
+
+            // Restore code blocks from placeholders
+            for (var i = 0; i < codeBlocks.length; i++) {
+                text = text.replace('___CODE_BLOCK_' + i + '___', codeBlocks[i]);
+            }
 
             return text;
         }
@@ -787,12 +819,13 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         // Add IDs to headings that don't have them (for explicit {#id} syntax)
         // The markdown renderer already adds IDs for regular headings
         document.addEventListener('DOMContentLoaded', function() {
+            // STEP 1: Fix all heading IDs first
             const headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4, .content h5, .content h6');
             const explicitIdRegex = /\s*\{#([^}]+)\}\s*$/;
-            
+
             headings.forEach(heading => {
                 const originalText = heading.textContent.trim();
-                
+
                 // Check if text has explicit ID marker {#id} - need to clean it up
                 if (explicitIdRegex.test(originalText)) {
                     // The markdown library doesn't handle {#id} syntax, so we need to
@@ -803,9 +836,16 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                     // Remove {#id} from display text
                     heading.textContent = originalText.replace(explicitIdRegex, '').trim();
                 }
+
+                // Fix IDs that start with numbers (invalid HTML IDs)
+                // querySelector can't handle IDs starting with digits
+                if (heading.id && /^[0-9]/.test(heading.id)) {
+                    console.log('Fixing numeric ID:', heading.id, '->', 'heading-' + heading.id);
+                    heading.id = 'heading-' + heading.id;
+                }
             });
 
-            // Build hierarchical TOC
+            // STEP 2: Build hierarchical TOC (uses the fixed IDs from headingsJSON)
             const tocData = {{.HeadingsJSON}};
             const tocRoot = document.getElementById('toc-root');
             
@@ -896,9 +936,13 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                     const href = this.getAttribute('href');
                     // Extract ID from href (remove the # prefix)
                     const targetId = href.substring(1);
+                    console.log('Looking for heading with ID:', targetId);
                     const target = document.getElementById(targetId);
                     if (target) {
+                        console.log('Found target, scrolling to:', target);
                         target.scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                        console.error('Target heading not found:', targetId);
                     }
                 });
             });
