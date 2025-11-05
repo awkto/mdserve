@@ -87,6 +87,9 @@ func extractHeadings(content []byte) []Heading {
 	explicitIDRegex := regexp.MustCompile(`\s*\{#([^}]+)\}\s*$`)
 	codeBlockRegex := regexp.MustCompile(`^\s*` + "`" + `{3,}`)
 
+	// Track used IDs to handle duplicates
+	usedIDs := make(map[string]int)
+
 	inCodeBlock := false
 	for _, line := range lines {
 		// Check if we're entering or exiting a code block
@@ -125,6 +128,17 @@ func extractHeadings(content []byte) []Heading {
 			// HTML IDs cannot start with a digit
 			if len(id) > 0 && id[0] >= '0' && id[0] <= '9' {
 				id = "heading-" + id
+			}
+
+			// Handle duplicate IDs by appending a suffix
+			originalID := id
+			if count, exists := usedIDs[originalID]; exists {
+				// This ID has been used before, append a number
+				usedIDs[originalID] = count + 1
+				id = fmt.Sprintf("%s-%d", originalID, count)
+			} else {
+				// First time seeing this ID
+				usedIDs[originalID] = 1
 			}
 
 			headings = append(headings, Heading{
@@ -822,6 +836,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             // STEP 1: Fix all heading IDs first
             const headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4, .content h5, .content h6');
             const explicitIdRegex = /\s*\{#([^}]+)\}\s*$/;
+            const usedIDs = {};
 
             headings.forEach(heading => {
                 const originalText = heading.textContent.trim();
@@ -842,6 +857,21 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                 if (heading.id && /^[0-9]/.test(heading.id)) {
                     console.log('Fixing numeric ID:', heading.id, '->', 'heading-' + heading.id);
                     heading.id = 'heading-' + heading.id;
+                }
+
+                // Handle duplicate IDs by appending a suffix
+                if (heading.id) {
+                    const originalID = heading.id;
+                    if (usedIDs[originalID]) {
+                        // This ID has been used before, append a number
+                        const newID = originalID + '-' + usedIDs[originalID];
+                        console.log('Duplicate ID detected:', originalID, '->', newID);
+                        heading.id = newID;
+                        usedIDs[originalID]++;
+                    } else {
+                        // First time seeing this ID
+                        usedIDs[originalID] = 1;
+                    }
                 }
             });
 
