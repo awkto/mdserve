@@ -79,6 +79,57 @@ func generateHeadingID(text string) string {
 	return id
 }
 
+// Fix indented code blocks in list items
+// The gomarkdown parser has a bug where fenced code blocks with 2-space indentation
+// in list items are not recognized if they contain blank lines. This function
+// adds extra indentation to such code blocks to work around the issue.
+func fixIndentedCodeBlocks(content []byte) []byte {
+	lines := strings.Split(string(content), "\n")
+	var result []string
+	inCodeBlock := false
+	codeBlockIndent := 0
+	
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		
+		// Detect start of fenced code block in list continuation
+		if !inCodeBlock {
+			if match := regexp.MustCompile(`^(\s+)` + "`" + `{3,}(\w*)`).FindStringSubmatch(line); match != nil {
+				indent := len(match[1])
+				// Check if this is likely part of a list item (2 or 3 space indent)
+				if indent >= 2 && indent <= 4 {
+					inCodeBlock = true
+					codeBlockIndent = indent
+					// Add 2 more spaces to ensure it's recognized as list content
+					result = append(result, "  "+line)
+					continue
+				}
+			}
+		} else {
+			// Inside code block - check for end fence
+			if match := regexp.MustCompile(`^(\s+)` + "`" + `{3,}$`).FindStringSubmatch(line); match != nil {
+				indent := len(match[1])
+				if indent == codeBlockIndent {
+					// End of code block
+					result = append(result, "  "+line)
+					inCodeBlock = false
+					codeBlockIndent = 0
+					continue
+				}
+			}
+			// Regular code block content or blank line - add 2 spaces
+			if inCodeBlock && codeBlockIndent > 0 {
+				result = append(result, "  "+line)
+				continue
+			}
+		}
+		
+		result = append(result, line)
+	}
+	
+	return []byte(strings.Join(result, "\n"))
+}
+
 // Extract headings from markdown content
 func extractHeadings(content []byte) []Heading {
 	var headings []Heading
@@ -340,13 +391,17 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fix indented code blocks before parsing
+	content = fixIndentedCodeBlocks(content)
+
 	// Extract headings for TOC
 	headings := extractHeadings(content)
 
 	// Convert markdown to HTML with AutoHeadingIDs extension
 	extensions := parser.CommonExtensions | parser.AutoHeadingIDs
 	p := parser.NewWithExtensions(extensions)
-	htmlFlags := html.CommonFlags
+	// Disable Smartypants to prevent backticks from being converted to smart quotes
+	htmlFlags := html.CommonFlags &^ html.Smartypants
 	opts := html.RendererOptions{Flags: htmlFlags}
 	renderer := html.NewRenderer(opts)
 	htmlContent := markdown.ToHTML(content, p, renderer)
