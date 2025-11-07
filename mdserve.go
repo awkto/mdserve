@@ -429,22 +429,30 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             {{end}}
         }
         .toc-sidebar {
-            width: 250px;
+            width: 340px;
             min-width: 150px;
             max-width: 600px;
             background: #f8f9fa;
-            border-{{if eq .TOCPosition "left"}}right{{else}}left{{end}}: 1px solid #ddd;
             padding: 20px;
             height: 100vh;
             position: sticky;
             top: 0;
             overflow-y: auto;
-            {{if eq .TOCPosition "left"}}
-            resize: horizontal;
-            {{else}}
-            resize: horizontal;
-            {{end}}
             overflow: auto;
+        }
+        .resize-handle {
+            width: 5px;
+            background: #ddd;
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background 0.2s;
+            position: relative;
+        }
+        .resize-handle:hover {
+            background: #0066cc;
+        }
+        .resize-handle:active {
+            background: #0052a3;
         }
         .toc-sidebar::-webkit-scrollbar {
             width: 8px;
@@ -732,7 +740,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
     {{if .Headings}}
-    <div class="toc-sidebar">
+    <div class="toc-sidebar" id="toc-sidebar">
         <h3>
             <span>Contents</span>
             <div class="toc-controls">
@@ -743,6 +751,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
         <ul class="toc-list" id="toc-root">
         </ul>
     </div>
+    <div class="resize-handle" id="resize-handle"></div>
     {{end}}
     <button class="toggle-btn" onclick="toggleView()">Show Source</button>
     <div class="main-content">
@@ -808,8 +817,8 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             return text;
         }
 
-        // Shared scroll position
-        let sharedScrollPos = 0;
+        // Shared scroll position (as percentage, not absolute pixels)
+        let sharedScrollPercent = 0;
         let highlightedContent = null;
 
         // Expand/Collapse all TOC functions
@@ -844,8 +853,10 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 
             if (isShowingSource) {
                 // Currently showing source, switch to rendered
-                // Save current scroll position from source (it scrolls on itself)
-                sharedScrollPos = rawContent.scrollTop;
+                // Calculate scroll percentage from source view
+                const scrollTop = rawContent.scrollTop;
+                const scrollHeight = rawContent.scrollHeight - rawContent.clientHeight;
+                sharedScrollPercent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
 
                 // Hide source, show rendered
                 rawContent.style.display = 'none';
@@ -854,14 +865,18 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                 toggleBtn.textContent = 'Show Source';
                 isShowingSource = false;
 
-                // Restore scroll position to window (rendered view scrolls on window)
+                // Restore scroll percentage to window (rendered view scrolls on window)
                 requestAnimationFrame(function() {
-                    window.scrollTo(0, sharedScrollPos);
+                    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+                    const targetScroll = docHeight * sharedScrollPercent;
+                    window.scrollTo(0, targetScroll);
                 });
             } else {
                 // Currently showing rendered, switch to source
-                // Save current scroll position from window (rendered view scrolls on window)
-                sharedScrollPos = window.pageYOffset || document.documentElement.scrollTop;
+                // Calculate scroll percentage from window
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+                sharedScrollPercent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
 
                 // Populate highlighted content if not already done
                 if (!highlightedContent) {
@@ -878,9 +893,11 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                 toggleBtn.textContent = 'Show Rendered';
                 isShowingSource = true;
 
-                // Restore scroll position to rawContent (it scrolls on itself)
+                // Restore scroll percentage to rawContent (it scrolls on itself)
                 requestAnimationFrame(function() {
-                    rawContent.scrollTop = sharedScrollPos;
+                    const docHeight = rawContent.scrollHeight - rawContent.clientHeight;
+                    const targetScroll = docHeight * sharedScrollPercent;
+                    rawContent.scrollTop = targetScroll;
                 });
             }
         }
@@ -1031,6 +1048,47 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
                     }
                 });
             });
+
+            // Resize handle functionality
+            const resizeHandle = document.getElementById('resize-handle');
+            const tocSidebar = document.getElementById('toc-sidebar');
+
+            if (resizeHandle && tocSidebar) {
+                let isResizing = false;
+
+                resizeHandle.addEventListener('mousedown', function(e) {
+                    isResizing = true;
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                    e.preventDefault();
+                });
+
+                document.addEventListener('mousemove', function(e) {
+                    if (!isResizing) return;
+
+                    const containerRect = document.body.getBoundingClientRect();
+                    {{if eq .TOCPosition "left"}}
+                    const newWidth = e.clientX;
+                    {{else}}
+                    const newWidth = containerRect.right - e.clientX;
+                    {{end}}
+
+                    // Apply min and max width constraints
+                    const minWidth = 150;
+                    const maxWidth = 600;
+                    const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+
+                    tocSidebar.style.width = constrainedWidth + 'px';
+                });
+
+                document.addEventListener('mouseup', function() {
+                    if (isResizing) {
+                        isResizing = false;
+                        document.body.style.cursor = '';
+                        document.body.style.userSelect = '';
+                    }
+                });
+            }
         });
     </script>
 </body>
