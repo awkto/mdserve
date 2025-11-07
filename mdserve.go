@@ -780,7 +780,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             // Use a placeholder to protect code blocks from other replacements
             var codeBlocks = [];
             text = text.replace(/^(\x60\x60\x60[^\n]*\n)([\s\S]*?)^(\x60\x60\x60)$/gm, function(match, open, content, close) {
-                var placeholder = '___CODE_BLOCK_' + codeBlocks.length + '___';
+                var placeholder = '\x00CODE' + codeBlocks.length + '\x00';
                 codeBlocks.push('<span class="md-code-block">' + open + content + close + '</span>');
                 return placeholder;
             });
@@ -788,17 +788,24 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             // Inline code (single backtick)
             text = text.replace(/\x60([^\x60\n]+)\x60/g, '<span class="md-code">$&</span>');
 
+            // Links - protect these early before bold/italic to prevent underscores in URLs from being treated as italic
+            var links = [];
+            text = text.replace(/\[([^\]]+)\]\([^\)]+\)/g, function(match) {
+                var placeholder = '\x00LINK' + links.length + '\x00';
+                links.push('<span class="md-link">' + match + '</span>');
+                return placeholder;
+            });
+
             // Headings (only outside of code blocks, now that they're replaced with placeholders)
             text = text.replace(/^(#{1,6}\s+.+)$/gm, '<span class="md-heading">$1</span>');
 
-            // Bold
-            text = text.replace(/(\*\*|__)([^*_\n]+)(\*\*|__)/g, '<span class="md-bold">$1$2$3</span>');
+            // Bold - must use matching delimiters, non-greedy to avoid long matches
+            text = text.replace(/(\*\*)([^*\n]+?)(\*\*)/g, '<span class="md-bold">$1$2$3</span>');
+            text = text.replace(/(__)([^_\n]+?)(__)/g, '<span class="md-bold">$1$2$3</span>');
 
-            // Italic
-            text = text.replace(/(\*|_)([^*_\n]+)(\*|_)/g, '<span class="md-italic">$1$2$3</span>');
-
-            // Links
-            text = text.replace(/\[([^\]]+)\]\([^\)]+\)/g, '<span class="md-link">$&</span>');
+            // Italic - must use matching delimiters, non-greedy, avoid matching bold markers
+            text = text.replace(/(?<!\*)(\*)(?!\*)([^*\n]+?)(\*)(?!\*)/g, '<span class="md-italic">$1$2$3</span>');
+            text = text.replace(/(?<!_)(_)(?!_)([^_\n]+?)(_)(?!_)/g, '<span class="md-italic">$1$2$3</span>');
 
             // List items
             text = text.replace(/^(\s*[-*+]\s+)/gm, '<span class="md-list">$1</span>');
@@ -809,9 +816,14 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
             // Horizontal rules
             text = text.replace(/^([-*_]{3,})$/gm, '<span class="md-hr">$1</span>');
 
+            // Restore links from placeholders
+            for (var i = 0; i < links.length; i++) {
+                text = text.replace('\x00LINK' + i + '\x00', links[i]);
+            }
+
             // Restore code blocks from placeholders
             for (var i = 0; i < codeBlocks.length; i++) {
-                text = text.replace('___CODE_BLOCK_' + i + '___', codeBlocks[i]);
+                text = text.replace('\x00CODE' + i + '\x00', codeBlocks[i]);
             }
 
             return text;
